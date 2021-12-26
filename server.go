@@ -1,42 +1,101 @@
 package main
 
 import (
-	"config"
-	"fmt"
-	"log"
-	"time"
+	"errors"
+	"net/http"
 
-	"gopkg.in/mgo.v2/bson"
+	"github.com/labstack/echo/v4"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
-type todolist struct {
-	Id        bson.ObjectId `bson:"_id,omitempty" json:"id,omitempty"`
-	Content   string        `json:"content,omitempty"`
-	CreatedAt time.Time     `json:"created_at, omitempty"`
-	UpdatedAt time.Time     `json:"updated_at, omitempty"`
+type Todo struct {
+	gorm.Model
+	Content string `json: "content"`
+	IsDone  bool   `json: "isDone"`
 }
 
 func main() {
-	config.Init()
-	s := config.NewSession()
-	defer s.Close()
 
-	c := s.Copy().DB(config.AppConfig.Database).C("todolists")
-	todolist := todolist{
-		Id:        bson.NewObjectId(),
-		Content:   "New Content",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	err := c.Insert(&todolist)
+	db, err := gorm.Open(sqlite.Open("todolist.db"), &gorm.Config{})
 	if err != nil {
-		log.Fatalf("[InsertDB]: %s\n", err)
+		panic("failed to connect database")
 	}
-	fmt.Println("Loi")
-	blogs := []todolist{}
-	c.Find(nil).All(&todolist)
+	db.AutoMigrate(&Todo{})
 
-	// Out put
-	fmt.Println(blogs)
+	e := echo.New()
 
+	e.GET("/todos", func(c echo.Context) error {
+		// tra ve 1 mang todo
+		var todos []Todo
+		result := db.Find(&todos)
+		if result.Error != nil {
+			return c.JSON(http.StatusInternalServerError, result.Error)
+		}
+		return c.JSON(http.StatusOK, todos)
+	})
+
+	// tao todo moi
+	e.POST("/todos", func(c echo.Context) error {
+		//	lay du lieu tu request
+		//	content := c.FormValue("content")
+		todo := Todo{Content: "", IsDone: false}
+		// ham Bind lay du lieu tu request
+		if err := c.Bind(&todo); err != nil {
+			return c.JSON(http.StatusBadRequest, err.Error())
+		}
+		result := db.Create(&todo)
+		if result.Error != nil {
+			return c.JSON(http.StatusInternalServerError, result.Error)
+		}
+		return c.JSON(http.StatusCreated, todo)
+	})
+
+	e.GET("/todos/:id", func(c echo.Context) error {
+		var todo Todo
+		id := c.Param("id")
+		result := db.First(&todo, id)
+		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
+		if result.Error != nil {
+			if isNotFoundError {
+				return c.JSON(http.StatusNotFound, "ID not exist!")
+			} else {
+				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+			}
+		}
+		return c.JSON(http.StatusOK, todo)
+	})
+
+	e.PATCH("/todos/:id", func(c echo.Context) error {
+		var todo Todo
+		id := c.Param("id")
+		result := db.First(&todo, id)
+		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
+		if result.Error != nil {
+			if isNotFoundError {
+				return c.JSON(http.StatusNotFound, "ID not exist!")
+			} else {
+				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+			}
+		}
+		if err := c.Bind(&todo); err != nil {
+			return c.JSON(http.StatusBadRequest, err.Error())
+		}
+		result_update := db.Model(&todo).Updates(&todo)
+		if result_update.Error != nil {
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+		}
+		return c.JSON(http.StatusOK, todo)
+	})
+
+	e.DELETE("todos/:id", func(c echo.Context) error {
+		var todo Todo
+		id := c.Param("id")
+		result := db.Delete(&todo, id)
+		if result.Error != nil {
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+		}
+		return c.JSON(http.StatusOK, "Delete Successful!")
+	})
+	e.Logger.Fatal(e.Start(":1323"))
 }
