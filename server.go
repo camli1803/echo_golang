@@ -10,17 +10,17 @@ import (
 	"gorm.io/gorm"
 )
 
-type User struct {
-	gorm.Model
-	Name  string `json: "name"`
-	Todos []Todo
-}
-
 type Todo struct {
 	gorm.Model
 	Content string `json: "content"`
 	IsDone  bool   `json: "isDone"`
 	UserID  int    `json: "userID"`
+}
+
+type User struct {
+	gorm.Model
+	Name  string `json: "name"`
+	Todos []Todo
 }
 
 type CreateTodoInput struct {
@@ -51,13 +51,11 @@ func main() {
 		var todos []Todo
 		userID := c.Param("userID")
 		result := db.Where("user_id = ?", userID).Find(&todos)
-		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
 		if result.Error != nil {
-			if isNotFoundError {
-				return c.JSON(http.StatusNotFound, "User ID not exist!")
-			} else {
-				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
-			}
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+		}
+		if len(todos) == 0 {
+			return c.JSON(http.StatusNotFound, "User ID not exist")
 		}
 		if result.Error != nil {
 			return c.JSON(http.StatusInternalServerError, result.Error)
@@ -68,7 +66,18 @@ func main() {
 	// tao todo moi
 	e.POST("/users/:userID/todos", func(c echo.Context) error {
 		//lay userID
+		var user User
 		userID := c.Param("userID")
+		//kiem tra user ID co ton tai khong
+		resultFindUserID := db.First(&user, userID)
+		isNotFoundError := errors.Is(resultFindUserID.Error, gorm.ErrRecordNotFound)
+		if resultFindUserID.Error != nil {
+			if isNotFoundError {
+				return c.JSON(http.StatusNotFound, "User ID not exist!")
+			} else {
+				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+			}
+		}
 		iUserID, _ := strconv.Atoi(userID)
 		//	lay du lieu tu request
 		todoInput := CreateTodoInput{Content: ""}
@@ -144,6 +153,14 @@ func main() {
 	e.GET("/users", func(c echo.Context) error {
 		var users []User
 		result := db.Find(&users)
+		for i := 0; i < len(users); i++ {
+			var todos []Todo
+			resultFindTodos := db.Where("user_id = ?", users[i].ID).Find(&todos)
+			if resultFindTodos.Error != nil {
+				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+			}
+			users[i].Todos = todos
+		}
 		if result.Error != nil {
 			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
 		}
@@ -165,16 +182,22 @@ func main() {
 
 	e.GET("/users/:userID", func(c echo.Context) error {
 		var user User
-		id := c.Param("userID")
-		result := db.First(&user, id)
+		userID := c.Param("userID")
+		result := db.First(&user, userID)
 		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
 		if result.Error != nil {
 			if isNotFoundError {
-				return c.JSON(http.StatusNotFound, "ID not exist!")
+				return c.JSON(http.StatusNotFound, "User ID not exist!")
 			} else {
 				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
 			}
 		}
+		var todos []Todo
+		resultFindTodos := db.Where("user_id = ?", userID).Find(&todos)
+		if resultFindTodos.Error != nil {
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+		}
+		user.Todos = todos
 		return c.JSON(http.StatusOK, user)
 	})
 
@@ -185,7 +208,7 @@ func main() {
 		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
 		if result.Error != nil {
 			if isNotFoundError {
-				return c.JSON(http.StatusNotFound, "ID not exist!")
+				return c.JSON(http.StatusNotFound, "User ID not exist!")
 			} else {
 				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
 			}
