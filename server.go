@@ -3,32 +3,62 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/labstack/echo/v4"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
+type User struct {
+	gorm.Model
+	Name  string `json: "name"`
+	Todos []Todo
+}
+
 type Todo struct {
 	gorm.Model
+	Content string `json: "content"`
+	IsDone  bool   `json: "isDone"`
+	UserID  int    `json: "userID"`
+}
+
+type CreateTodoInput struct {
+	//{"content":"study IT"}
+	Content string `json: "content"`
+}
+
+type UpdateTodo struct {
 	Content string `json: "content"`
 	IsDone  bool   `json: "isDone"`
 }
 
 func main() {
 
-	db, err := gorm.Open(sqlite.Open("todolist.db"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("todolist1.db"), &gorm.Config{})
 	if err != nil {
 		panic("failed to connect database")
 	}
-	db.AutoMigrate(&Todo{})
+
+	//tao bang Todo, User
+	db.AutoMigrate(&Todo{}, &User{})
 
 	e := echo.New()
 
-	e.GET("/todos", func(c echo.Context) error {
+	// CRUD todo
+	e.GET("/users/:userID/todos", func(c echo.Context) error {
 		// tra ve 1 mang todo
 		var todos []Todo
-		result := db.Find(&todos)
+		userID := c.Param("userID")
+		result := db.Where("user_id = ?", userID).Find(&todos)
+		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
+		if result.Error != nil {
+			if isNotFoundError {
+				return c.JSON(http.StatusNotFound, "User ID not exist!")
+			} else {
+				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+			}
+		}
 		if result.Error != nil {
 			return c.JSON(http.StatusInternalServerError, result.Error)
 		}
@@ -36,14 +66,17 @@ func main() {
 	})
 
 	// tao todo moi
-	e.POST("/todos", func(c echo.Context) error {
+	e.POST("/users/:userID/todos", func(c echo.Context) error {
+		//lay userID
+		userID := c.Param("userID")
+		iUserID, _ := strconv.Atoi(userID)
 		//	lay du lieu tu request
-		//	content := c.FormValue("content")
-		todo := Todo{Content: "", IsDone: false}
+		todoInput := CreateTodoInput{Content: ""}
 		// ham Bind lay du lieu tu request
-		if err := c.Bind(&todo); err != nil {
+		if err := c.Bind(&todoInput); err != nil {
 			return c.JSON(http.StatusBadRequest, err.Error())
 		}
+		todo := Todo{Content: todoInput.Content, IsDone: false, UserID: iUserID}
 		result := db.Create(&todo)
 		if result.Error != nil {
 			return c.JSON(http.StatusInternalServerError, result.Error)
@@ -51,51 +84,136 @@ func main() {
 		return c.JSON(http.StatusCreated, todo)
 	})
 
-	e.GET("/todos/:id", func(c echo.Context) error {
-		var todo Todo
+	e.GET("/users/:userID/todos/:id", func(c echo.Context) error {
+		userID := c.Param("userID")
+		var todos []Todo
 		id := c.Param("id")
-		result := db.First(&todo, id)
-		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
+		result := db.Where("user_id = ? AND id = ?", userID, id).Find(&todos)
 		if result.Error != nil {
-			if isNotFoundError {
-				return c.JSON(http.StatusNotFound, "ID not exist!")
-			} else {
-				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
-			}
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
 		}
-		return c.JSON(http.StatusOK, todo)
+		if len(todos) == 0 {
+			return c.JSON(http.StatusNotFound, "User ID or todo id not exist!")
+		}
+		return c.JSON(http.StatusOK, todos[0])
 	})
 
-	e.PATCH("/todos/:id", func(c echo.Context) error {
-		var todo Todo
+	e.PATCH("/users/:userID/todos/:id", func(c echo.Context) error {
+		userID := c.Param("userID")
+		iUserID, _ := strconv.Atoi(userID)
+		var todos []Todo
 		id := c.Param("id")
-		result := db.First(&todo, id)
-		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
+		result := db.Where("user_id = ? AND id = ?", userID, id).Find(&todos)
 		if result.Error != nil {
-			if isNotFoundError {
-				return c.JSON(http.StatusNotFound, "ID not exist!")
-			} else {
-				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
-			}
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
 		}
-		if err := c.Bind(&todo); err != nil {
+		if len(todos) == 0 {
+			return c.JSON(http.StatusNotFound, "User ID or todo id not exist!")
+		}
+		var updatetodo UpdateTodo
+		if err := c.Bind(&updatetodo); err != nil {
 			return c.JSON(http.StatusBadRequest, err.Error())
 		}
-		result_update := db.Model(&todo).Updates(&todo)
+		todo := Todo{Content: updatetodo.Content, IsDone: updatetodo.IsDone, UserID: iUserID}
+		result_update := db.Model(&todos[0]).Updates(&todo)
 		if result_update.Error != nil {
 			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
 		}
-		return c.JSON(http.StatusOK, todo)
+		return c.JSON(http.StatusOK, todos[0])
 	})
 
-	e.DELETE("todos/:id", func(c echo.Context) error {
-		var todo Todo
+	e.DELETE("/users/:userID/todos/:id", func(c echo.Context) error {
+		userID := c.Param("userID")
+		var todos []Todo
 		id := c.Param("id")
-		result := db.Delete(&todo, id)
+		result := db.Where("user_id = ? AND id = ?", userID, id).Find(&todos)
 		if result.Error != nil {
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+		}
+		if len(todos) == 0 {
+			return c.JSON(http.StatusNotFound, "User ID or todo id not exist!")
+		}
+		resultDelete := db.Delete(&todos[0], id)
+		if resultDelete.Error != nil {
 			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
 		}
 		return c.JSON(http.StatusOK, "Delete Successful!")
 	})
+
+	// CRUD user
+	e.GET("/users", func(c echo.Context) error {
+		var users []User
+		result := db.Find(&users)
+		if result.Error != nil {
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+		}
+		return c.JSON(http.StatusOK, users)
+	})
+
+	e.POST("/users", func(c echo.Context) error {
+		var user User
+		if err := c.Bind(&user); err != nil {
+			return c.JSON(http.StatusBadRequest, err.Error())
+		}
+		result := db.Create(&user)
+		if result.Error != nil {
+			return c.JSON(http.StatusInternalServerError, result.Error)
+		}
+		return c.JSON(http.StatusCreated, user)
+
+	})
+
+	e.GET("/users/:userID", func(c echo.Context) error {
+		var user User
+		id := c.Param("userID")
+		result := db.First(&user, id)
+		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
+		if result.Error != nil {
+			if isNotFoundError {
+				return c.JSON(http.StatusNotFound, "ID not exist!")
+			} else {
+				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+			}
+		}
+		return c.JSON(http.StatusOK, user)
+	})
+
+	e.PATCH("/users/:userID", func(c echo.Context) error {
+		var user User
+		id := c.Param("userID")
+		result := db.First(&user, id)
+		isNotFoundError := errors.Is(result.Error, gorm.ErrRecordNotFound)
+		if result.Error != nil {
+			if isNotFoundError {
+				return c.JSON(http.StatusNotFound, "ID not exist!")
+			} else {
+				return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+			}
+		}
+		if err := c.Bind(&user); err != nil {
+			return c.JSON(http.StatusBadRequest, err.Error())
+		}
+		result_update := db.Model(&user).Updates(&user)
+		if result_update.Error != nil {
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+		}
+		return c.JSON(http.StatusOK, user)
+	})
+
+	e.DELETE("/users/:userID", func(c echo.Context) error {
+		var user User
+		userID := c.Param("userID")
+		result := db.Delete(&user, userID)
+		if result.Error != nil {
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+		}
+		var todo Todo
+		resultDeleteTodo := db.Where("user_id = ?", userID).Delete(&todo)
+		if resultDeleteTodo.Error != nil {
+			return c.JSON(http.StatusInternalServerError, "Internal Server Error")
+		}
+		return c.JSON(http.StatusOK, "Delete Successful!")
+	})
+
 	e.Logger.Fatal(e.Start(":1323"))
 }
